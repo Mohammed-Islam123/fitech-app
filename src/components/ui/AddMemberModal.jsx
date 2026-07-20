@@ -3,6 +3,7 @@ import { Button } from "./Button";
 import { User, EnvelopeSimple, Phone, X, IdentificationCard, PencilSimple, CreditCard } from "../../icons/index";
 import { GenderIntersex, CalendarDots, MoneyWavy, ListNumbers, HourglassSimple, CalendarBlank } from "@phosphor-icons/react";
 import { api } from "../../services/api";
+import nfcScanner from "../../services/nfcScanner";
 
 const tabs = ["Information", "Subscription"];
 
@@ -34,6 +35,20 @@ export default function AddMemberModal({ onClose }) {
   useEffect(() => {
     const t = setTimeout(() => cardInputRef.current?.focus(), 300);
     return () => clearTimeout(t);
+  }, []);
+
+  // Pause background scanner while this modal is open so card scans
+  // intended for member creation don't trigger entry/exit processing.
+  // Uses the scanner singleton directly (not the React context) to avoid
+  // stale-closure issues with the hook's startListening callback chain.
+  useEffect(() => {
+    const wasActive = nfcScanner.isActive();
+    nfcScanner.stop();
+    return () => {
+      if (wasActive) {
+        nfcScanner.start();
+      }
+    };
   }, []);
   // ────────────────────────────────────────────────────────────────────────
 

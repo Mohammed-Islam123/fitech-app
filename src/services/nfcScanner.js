@@ -4,13 +4,44 @@ class NFCScannerService {
   constructor() {
     this.isListening = false;
     this.scanTimeout = null;
-    this.currentInput = '';
     this.callbacks = {
       onScan: null,
       onError: null,
       onStatusChange: null
     };
-    this.eventHandler = null;
+    this.lastScannedUid = null;
+    this.lastScannedTime = 0;
+    this._diagAllowed = 0;
+    this._diagBlocked = 0;
+    this.hiddenInput = null;
+    this._blurHandler = null;
+    this._keydownHandler = null;
+  }
+
+  /**
+   * Check if an element is a form field that should keep focus
+   */
+  _isFormField(element) {
+    if (!element) return false;
+    return (
+      element.tagName === 'INPUT' ||
+      element.tagName === 'TEXTAREA' ||
+      element.tagName === 'SELECT' ||
+      element.isContentEditable
+    );
+  }
+
+  /**
+   * Re-focus the hidden input unless a form field is active
+   */
+  _refocus() {
+    if (!this.isListening || !this.hiddenInput) return;
+    if (this._isFormField(document.activeElement)) {
+      this.log('Refocus blocked — form field is active:', document.activeElement?.name || document.activeElement?.id || document.activeElement?.tagName);
+      return;
+    }
+    this.hiddenInput.focus();
+    this.log('Refocused hidden input. Focused:', document.activeElement === this.hiddenInput);
   }
 
   /**
@@ -22,17 +53,59 @@ class NFCScannerService {
   init(options = {}) {
     this.timeout = options.timeout || 100;
     this.debug = options.debug || false;
-    
-    // Get the API URL from environment or use default
-    this.apiUrl = import.meta.env.VITE_IDENTITY_API_URL || "http://localhost:5098";
-    // Remove trailing slash if present
-    this.apiUrl = this.apiUrl.replace(/\/$/, "");
-    
-    // Bind the event handler
-    this.eventHandler = this.handleKeyPress.bind(this);
-    
+
+    // Create a hidden input element for reliable card reader capture.
+    // HTML inputs have native OS-level keyboard buffering that guarantees
+    // every character is captured even at USB reader speed. This is the
+    // same mechanism that makes AddMemberModal's <input> work perfectly.
+    // NOTE: pointer-events:none or off-screen positioning prevents focus,
+    // so we keep the element in the viewport but make it invisible.
+    if (!this.hiddenInput) {
+      this.hiddenInput = document.createElement('input');
+      this.hiddenInput.type = 'text';
+      this.hiddenInput.style.cssText =
+        'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;margin:0;border:0;opacity:0;overflow:hidden;z-index:-1;';
+      this.hiddenInput.autocomplete = 'off';
+      this.hiddenInput.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(this.hiddenInput);
+    }
+
+    // When the hidden input loses focus, re-focus it after a short delay
+    // unless the user is interacting with a form field (search box, etc.).
+    this._blurHandler = () => {
+      this.log('Hidden input blurred. Active element:', document.activeElement?.tagName, document.activeElement?.name || '');
+      setTimeout(() => this._refocus(), 50);
+    };
+
+    // Handle Enter to trigger scan; all other keys are buffered by the
+    // input element automatically.
+    this._keydownHandler = (event) => {
+      if (this.scanTimeout) {
+        clearTimeout(this.scanTimeout);
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const cardUid = this.hiddenInput.value.trim();
+        this.hiddenInput.value = '';
+        if (cardUid) {
+          this._processScan(cardUid);
+        } else {
+          this.log('Enter pressed but input is empty');
+        }
+        return;
+      }
+
+      this.log('Key pressed:', event.key, '| Current value:', this.hiddenInput.value);
+
+      // Reset timeout on every keystroke so rapid scans don't time out
+      this.scanTimeout = setTimeout(() => {
+        if (this.hiddenInput) this.hiddenInput.value = '';
+        this.scanTimeout = null;
+      }, this.timeout);
+    };
+
     this.log('NFC Scanner Service initialized');
-    this.log('API URL:', this.apiUrl);
   }
 
   /**
@@ -46,10 +119,14 @@ class NFCScannerService {
     }
 
     this.callbacks = { ...this.callbacks, ...callbacks };
-    
-    // Add event listener for keyboard input (USB NFC readers act as keyboards)
-    document.addEventListener('keypress', this.eventHandler);
-    
+
+    if (this.hiddenInput) {
+      this.hiddenInput.addEventListener('blur', this._blurHandler);
+      this.hiddenInput.addEventListener('keydown', this._keydownHandler);
+      this.hiddenInput.focus();
+      this.log('Hidden input focused:', document.activeElement === this.hiddenInput);
+    }
+
     this.isListening = true;
     this.callbacks.onStatusChange?.(true);
     this.log('Started listening for NFC scans');
@@ -63,158 +140,64 @@ class NFCScannerService {
       return;
     }
 
-    document.removeEventListener('keypress', this.eventHandler);
-    
+    if (this.hiddenInput) {
+      this.hiddenInput.removeEventListener('blur', this._blurHandler);
+      this.hiddenInput.removeEventListener('keydown', this._keydownHandler);
+      this.hiddenInput.blur();
+      this.hiddenInput.value = '';
+    }
+
     if (this.scanTimeout) {
       clearTimeout(this.scanTimeout);
       this.scanTimeout = null;
     }
-    
-    this.currentInput = '';
+
     this.isListening = false;
     this.callbacks.onStatusChange?.(false);
+    console.log('[nfcScanner:STOP] dedup state RESET (lastUid cleared)');
+    this.lastScannedUid = null;
+    this.lastScannedTime = 0;
     this.log('Stopped listening for NFC scans');
   }
 
   /**
-   * Handle keypress events from NFC reader
-   * @param {KeyboardEvent} event 
+   * Process a completed scan with deduplication
    */
-  handleKeyPress(event) {
-    // Reset timeout on each new character
-    if (this.scanTimeout) {
-      clearTimeout(this.scanTimeout);
-    }
+  _processScan(cardUid) {
+    this.log('Scan complete:', cardUid);
 
-    const char = event.key;
-    
-    // Enter key typically signals end of scan
-    if (char === 'Enter') {
-      if (this.currentInput.length > 0) {
-        const cardUid = this.currentInput.trim();
-        this.log('Scan complete:', cardUid);
-        
-        // 🔥 DIRECT API CALL
-        console.log('🚨 DIRECT API CALL - Card UID:', cardUid);
-        this.callApiDirectly(cardUid);
-        
-        // Also trigger the normal callback
-        this.callbacks.onScan?.(cardUid);
-        
-        this.currentInput = '';
-        this.scanTimeout = null;
-      }
+    // Debounce: ignore repeated scans of the same card while it remains
+    // on the reader. Most readers continuously poll — this prevents
+    // spamming the API with the same unregistered card.
+    const now = Date.now();
+    const timeSinceLast = now - this.lastScannedTime;
+    const isDuplicate = cardUid === this.lastScannedUid && timeSinceLast < 30000;
+
+    console.log(
+      '[nfcScanner:DEDUP] uid=%s | lastUid=%s | lastTime=%d | now=%d | delta=%dms | duplicate=%s | allowedSoFar=%d | blockedSoFar=%d',
+      cardUid, this.lastScannedUid, this.lastScannedTime, now, timeSinceLast,
+      isDuplicate, this._diagAllowed, this._diagBlocked
+    );
+
+    if (isDuplicate) {
+      this._diagBlocked++;
       return;
     }
+    this._diagAllowed++;
+    this.lastScannedUid = cardUid;
+    this.lastScannedTime = now;
 
-    // Only accept alphanumeric characters and common hex characters (A-F, a-f, 0-9)
-    if (char.length === 1 && /[a-fA-F0-9]/i.test(char)) {
-      this.currentInput += char;
-    }
-    
-    // Set timeout to reset if scan is incomplete
-    this.scanTimeout = setTimeout(() => {
-      if (this.debug) {
-        this.log('Scan timeout - resetting buffer');
-      }
-      this.currentInput = '';
-      this.scanTimeout = null;
-    }, this.timeout);
-  }
-
-  /**
-   * Call API directly with the scanned card UID
-   * @param {string} cardUid 
-   */
-  async callApiDirectly(cardUid) {
-    console.log('📡 MAKING DIRECT API CALL for:', cardUid);
-    console.log('📡 API URL:', this.apiUrl);
-    
-    try {
-      const token = localStorage.getItem("token");
-      console.log('Token exists:', !!token);
-      
-      if (!token) {
-        console.error('❌ No token found. Please login first.');
-        this.showNotification('error', 'Please login to scan cards');
-        return;
-      }
-      
-      // Use the correct API endpoint
-      const endpoint = `${this.apiUrl}/api/activity/entry-exit/scan`;
-      console.log('📡 Full URL:', endpoint);
-      
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ cardUid })
-      });
-      
-      console.log('Response status:', response.status);
-      const data = await response.json();
-      console.log('Response data:', data);
-      
-      if (!response.ok) {
-        throw new Error(data.message || data.detail || 'API call failed');
-      }
-      
-      console.log('✅ API call successful!', data);
-      this.showNotification('success', data.message || 'Card processed successfully');
-      
-    } catch (error) {
-      console.error('❌ API call failed:', error);
-      this.showNotification('error', error.message || 'Failed to process card');
-    }
-  }
-
-  /**
-   * Show a simple notification
-   * @param {string} type - 'success' or 'error'
-   * @param {string} message 
-   */
-  showNotification(type, message) {
-    // Create notification element
-    const notification = document.createElement('div');
-    notification.className = `fixed bottom-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-in slide-in-from-bottom-5 ${
-      type === 'success' ? 'bg-green-500' : 'bg-red-500'
-    } text-white`;
-    
-    const icon = type === 'success' 
-      ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
-      : '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
-    
-    notification.innerHTML = `
-      ${icon}
-      <span class="text-sm font-medium">${message}</span>
-    `;
-    
-    document.body.appendChild(notification);
-    
-    // Remove after 3 seconds
-    setTimeout(() => {
-      notification.style.opacity = '0';
-      notification.style.transition = 'opacity 0.5s';
-      setTimeout(() => {
-        if (document.body.contains(notification)) {
-          document.body.removeChild(notification);
-        }
-      }, 500);
-    }, 3000);
+    this.callbacks.onScan?.(cardUid);
   }
 
   /**
    * Simulate a card scan (for testing purposes)
-   * @param {string} cardUid 
+   * @param {string} cardUid
    */
   simulateScan(cardUid) {
     if (this.debug) {
       this.log('Simulating scan:', cardUid);
     }
-    console.log('🚨 SIMULATED SCAN - Card UID:', cardUid);
-    this.callApiDirectly(cardUid);
     this.callbacks.onScan?.(cardUid);
   }
 

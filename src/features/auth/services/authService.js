@@ -1,7 +1,11 @@
-const BASE_URL = (import.meta.env.VITE_IDENTITY_API_URL || "https://localhost:5098").replace(/\/$/, "");
+const BASE_URL = (
+  import.meta.env.VITE_IDENTITY_API_URL || "http://localhost:5098"
+).replace(/\/$/, "");
 
 function pickApiValue(payload, key) {
-  return payload?.[key] ?? payload?.[key.charAt(0).toLowerCase() + key.slice(1)];
+  return (
+    payload?.[key] ?? payload?.[key.charAt(0).toLowerCase() + key.slice(1)]
+  );
 }
 
 function getErrorMessage(data) {
@@ -11,7 +15,10 @@ function getErrorMessage(data) {
     return errors.join(" ");
   }
 
-  return pickApiValue(data, "Message") || "Login failed. Please check your credentials.";
+  return (
+    pickApiValue(data, "Message") ||
+    "Login failed. Please check your credentials."
+  );
 }
 
 export async function loginUser(emailOrUserName, password) {
@@ -23,7 +30,7 @@ export async function loginUser(emailOrUserName, password) {
     body: JSON.stringify({
       emailOrUserName,
       password,
-      clientId: "web"
+      clientId: "web",
     }),
   });
 

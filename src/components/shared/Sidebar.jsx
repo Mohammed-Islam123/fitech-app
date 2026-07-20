@@ -19,6 +19,7 @@ import {
   Calendar,
   ClipboardText,
 } from '../../icons/index'
+import { LogIn as LogInIcon } from 'lucide-react'
 
 export function Sidebar({ role = 'admin' }) {
   const [collapsed, setCollapsed] = useState(false)
@@ -31,6 +32,7 @@ export function Sidebar({ role = 'admin' }) {
   const adminNavItems = [
     { label: 'Dashboard', path: '/admin/dashboard', icon: SquaresFourIcon },
     { label: 'Members', path: '/admin/members', icon: Users },
+    { label: 'Entry / Exit', path: '/admin/entry-exit', icon: LogInIcon },
     { label: 'Subscriptions', path: '/admin/subscriptions', icon: IdentificationCard },
     { label: 'Finance', path: '/admin/finance', icon: Money },
     { label: 'Equipment', path: '/admin/equipment', icon: BarbellIcon },

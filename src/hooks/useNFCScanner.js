@@ -69,35 +69,30 @@ export function useNFCScanner(options = {}) {
     }
   }, [options]);
 
-  const processQueue = useCallback(async () => {
-    if (isProcessing.current || processingQueue.length === 0) return;
-    
-    isProcessing.current = true;
-    
-    while (processingQueue.length > 0) {
-      const cardUid = processingQueue[0];
-      try {
-        await processCardScan(cardUid);
-      } catch (error) {
-        console.error('Failed to process scan:', error);
-      }
-      setProcessingQueue(prev => prev.slice(1));
-    }
-    
-    isProcessing.current = false;
-  }, [processingQueue, processCardScan]);
-
   const handleScan = useCallback((cardUid) => {
     console.log('📇 Card scanned:', cardUid);
     setProcessingQueue(prev => [...prev, cardUid]);
     options.onScan?.(cardUid);
   }, [options]);
 
+  // Process queue items one at a time via effect to avoid stale-closure
+  // infinite loops. Each item is removed after success OR failure so
+  // unregistered cards are never retried.
   useEffect(() => {
-    if (processingQueue.length > 0 && !isProcessing.current) {
-      processQueue();
-    }
-  }, [processingQueue, processQueue]);
+    if (processingQueue.length === 0 || isProcessing.current) return;
+
+    isProcessing.current = true;
+    const cardUid = processingQueue[0];
+
+    processCardScan(cardUid)
+      .catch(() => {
+        // Errors already handled in processCardScan (status, callbacks, logs)
+      })
+      .finally(() => {
+        setProcessingQueue(prev => prev.slice(1));
+        isProcessing.current = false;
+      });
+  }, [processingQueue, processCardScan]);
 
   const startListening = useCallback(() => {
     if (!nfcScanner.isActive()) {
@@ -120,7 +115,7 @@ export function useNFCScanner(options = {}) {
     const isDev = import.meta.env?.MODE === 'development' || process.env?.NODE_ENV === 'development';
     nfcScanner.init({ 
       debug: isDev,
-      timeout: 100 
+      timeout: 300 
     });
     
     if (options.autoStart) {
@@ -130,7 +125,12 @@ export function useNFCScanner(options = {}) {
     return () => {
       stopListening();
     };
-  }, [options.autoStart, startListening, stopListening]);
+    // Only re-run when autoStart toggles — startListening/stopListening 
+    // are unstable (they depend on options which changes every render), 
+    // which would cause the scanner to restart on every provider re-render,
+    // defeating manual pause/resume (e.g. from AddMemberModal).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.autoStart]);
 
   const simulateScan = useCallback((cardUid) => {
     nfcScanner.simulateScan(cardUid);

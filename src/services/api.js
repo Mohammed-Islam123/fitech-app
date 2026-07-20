@@ -279,12 +279,6 @@ export const api = {
       body: JSON.stringify({ userId, amount, paymentMethod: methodInt, paymentType: typeInt, referenceId, notes }),
     }, PAYMENT_BASE_URL);
   },
-scanCard: async (cardUid) => {
-  return apiFetch("/api/activity/entry-exit/scan", {
-    method: "POST",
-    body: JSON.stringify({ cardUid }),
-  }, ACTIVITY_BASE_URL);
-},
   // Renewals
   listPendingRenewals: async () => {
     return apiFetch("/api/subscriptions/renew/pending");

@@ -18,6 +18,7 @@ export default function AdminLayout() {
           const titles = {
                 '/admin/dashboard': 'Dashboard',
                   '/admin/members': 'Members',
+                  '/admin/entry-exit': 'Entry / Exit',
                   '/admin/subscriptions': 'Subscriptions',
                   '/admin/finance': 'Finance',
                   '/admin/equipment': 'Equipment',
@@ -27,7 +28,7 @@ export default function AdminLayout() {
                   '/admin/requests': 'Requests',
                   '/admin/profile': 'Profile',
                   '/admin': 'Dashboard'   }
-                                                                        
+
                         return titles[location.pathname] || 'Dashboard'
                           }
 

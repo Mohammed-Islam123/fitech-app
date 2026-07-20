@@ -9,6 +9,7 @@ import Finance from '../pages/admin/Finance'
 import Equipment from '../pages/admin/Equipment'
 import Reports from '../pages/admin/Reports'
 import Shop from '../pages/admin/Shop'
+import EntryExit from '../pages/admin/EntryExit'
 import Settings from '../pages/admin/Settings'
 import Requests from '../pages/admin/Requests'
 import AdminProfile from '../pages/admin/Profile'
@@ -117,6 +118,10 @@ export const router = createBrowserRouter([
       {
         path: '/admin/requests',
         element: <Requests />,
+      },
+      {
+        path: '/admin/entry-exit',
+        element: <EntryExit />,
       },
       {
         path: '/admin/profile',
